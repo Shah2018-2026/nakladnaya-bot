@@ -13,7 +13,7 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
 def load_products():
-    wb = openpyxl.load_workbook("products(4).xlsx")
+    wb = openpyxl.load_workbook("products.xlsx")
     ws = wb.active
     products = {}
     for row in ws.iter_rows(min_row=2, values_only=True):
