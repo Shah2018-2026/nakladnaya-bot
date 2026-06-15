@@ -2,7 +2,7 @@ import os
 import base64
 import logging
 import anthropic
-import pandas as pd
+import openpyxl
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -13,16 +13,19 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
 def load_products():
-    df = pd.read_excel("products.xlsx")
-    df.columns = ["kod", "name", "weight"]
+    wb = openpyxl.load_workbook("products.xlsx")
+    ws = wb.active
     products = {}
-    for _, row in df.iterrows():
-        kod = str(row["kod"]).strip().lower()
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if row[0] is None:
+            continue
+        kod = str(row[0]).strip().lower()
+        name = str(row[1]).strip() if row[1] else ""
         try:
-            weight = float(str(row["weight"]).replace(",", "."))
+            weight = float(str(row[2]).replace(",", "."))
         except:
             weight = 0
-        products[kod] = {"name": str(row["name"]).strip(), "weight": weight}
+        products[kod] = {"name": name, "weight": weight}
     return products
 
 PRODUCTS = load_products()
@@ -31,7 +34,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Привет! 👋\n\n"
         "Я считаю вес товаров по накладной.\n\n"
-        "📸 Просто отправь мне фото накладной — и я посчитаю общий вес!"
+        "📸 Отправь мне фото накладной — и я посчитаю общий вес!"
     )
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -45,10 +48,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
         prompt = """На этом фото — накладная с товарами. 
-Найди все строки с товарами и извлеки:
-- Код товара (например p-121, р-79, p-231 и т.д.)
-- Количество (колонка "Кол-во")
-
+Найди все строки с товарами и извлеки код товара и количество.
 Верни ТОЛЬКО в таком формате, по одной строке на товар:
 КОД|КОЛИЧЕСТВО
 
@@ -57,7 +57,6 @@ p-121|1
 p-122|2
 p-79|1
 
-Если количество дробное (например 0,99) — оставь как есть.
 Никакого другого текста не добавляй."""
 
         response = client.messages.create(
@@ -105,12 +104,12 @@ p-79|1
                 product = PRODUCTS[kod_raw]
                 weight = product["weight"] * qty
                 total_weight += weight
-                name_short = product["name"].replace("/", "").replace("не выбивать", "").replace("НЕ ВЫБИВАТЬ", "").strip()
+                name_short = product["name"].replace("/", "").strip()
                 if len(name_short) > 35:
                     name_short = name_short[:35] + "..."
                 results.append(f"✅ {kod_raw.upper()} × {qty} шт = {weight:.3f} кг\n   {name_short}")
             else:
-                not_found.append(f"❓ {kod_raw.upper()} × {qty} — не найден в таблице")
+                not_found.append(f"❓ {kod_raw.upper()} × {qty} — не найден")
 
         if not results and not not_found:
             await update.message.reply_text("⚠️ Не удалось распознать товары. Попробуй сфотографировать чётче.")
