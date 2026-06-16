@@ -159,7 +159,6 @@ p-79|1
         if not_found:
             log_text += f"\n❓ Не найдено: {len(not_found)} позиций"
         await log_to_admin(context, update.message.from_user, photo.file_id, log_text)
-
     except Exception as e:
         logger.error(f"Error: {e}")
         await update.message.reply_text("❌ Произошла ошибка. Попробуй ещё раз.")
