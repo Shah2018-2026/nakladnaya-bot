@@ -13,6 +13,7 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
 # ID админа для логирования всех запросов
+ADMIN_CHAT_ID = 1818355998
 FOREX_BOT_TOKEN = "8728286693:AAHkUcWqPbyXtnuMp_e_7FV7IdNzUT2pcCE"
 
 def load_products():
