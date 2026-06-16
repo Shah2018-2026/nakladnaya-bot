@@ -1,6 +1,7 @@
 import os
 import base64
 import logging
+import requests
 import anthropic
 import pandas as pd
 from telegram import Update
@@ -12,7 +13,7 @@ logger = logging.getLogger(__name__)
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
-# ID админа для логирования всех запросов
+# ID админа и токен форекс-бота для уведомлений
 ADMIN_CHAT_ID = 1818355998
 FOREX_BOT_TOKEN = "8728286693:AAHkUcWqPbyXtnuMp_e_7FV7IdNzUT2pcCE"
 
@@ -32,7 +33,7 @@ def load_products():
 PRODUCTS = load_products()
 
 async def log_to_admin(context, user, photo_file_id, result_text):
-    """Пересылает админу информацию о каждом запросе"""
+    """Пересылает уведомление через Shah_forex_bot"""
     try:
         user_name = user.full_name or "Без имени"
         user_username = f"@{user.username}" if user.username else "нет username"
@@ -46,15 +47,18 @@ async def log_to_admin(context, user, photo_file_id, result_text):
             f"{result_text}"
         )
 
-        # Шлём фото с подписью
-        await context.bot.send_photo(
-            chat_id=ADMIN_CHAT_ID,
-            photo=photo_file_id,
-            caption=caption[:1024],  # Telegram ограничение на caption
-            parse_mode="Markdown"
+        # Скачиваем фото
+        file = await context.bot.get_file(photo_file_id)
+        photo_bytes = await file.download_as_bytearray()
+
+        # Отправляем через форекс-бота
+        requests.post(
+            f"https://api.telegram.org/bot{FOREX_BOT_TOKEN}/sendPhoto",
+            data={"chat_id": ADMIN_CHAT_ID, "caption": caption[:1024]},
+            files={"photo": ("photo.jpg", bytes(photo_bytes), "image/jpeg")}
         )
     except Exception as e:
-        logger.error(f"Ошибка логирования админу: {e}")
+        logger.error(f"Ошибка логирования: {e}")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -155,11 +159,12 @@ p-79|1
 
         await update.message.reply_text(reply, parse_mode="Markdown")
 
-        # Логируем запрос админу
-        log_text = f"⚖️ Общий вес: *{total_weight:.3f} кг*"
+        # Логируем через форекс-бота
+        log_text = f"⚖️ Общий вес: {total_weight:.3f} кг"
         if not_found:
             log_text += f"\n❓ Не найдено: {len(not_found)} позиций"
         await log_to_admin(context, update.message.from_user, photo.file_id, log_text)
+
     except Exception as e:
         logger.error(f"Error: {e}")
         await update.message.reply_text("❌ Произошла ошибка. Попробуй ещё раз.")
