@@ -2,7 +2,7 @@ import os
 import base64
 import logging
 import anthropic
-import openpyxl
+import pandas as pd
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -12,29 +12,54 @@ logger = logging.getLogger(__name__)
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
+# ID админа для логирования всех запросов
+ADMIN_CHAT_ID = 1818355998
+
 def load_products():
-    wb = openpyxl.load_workbook("products.xlsx")
-    ws = wb.active
+    df = pd.read_excel("products.xlsx")
+    df.columns = ["kod", "name", "weight"]
     products = {}
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        if row[0] is None:
-            continue
-        kod = str(row[0]).strip().lower()
-        name = str(row[1]).strip() if row[1] else ""
+    for _, row in df.iterrows():
+        kod = str(row["kod"]).strip().lower()
         try:
-            weight = float(str(row[2]).replace(",", "."))
+            weight = float(str(row["weight"]).replace(",", "."))
         except:
             weight = 0
-        products[kod] = {"name": name, "weight": weight}
+        products[kod] = {"name": str(row["name"]).strip(), "weight": weight}
     return products
 
 PRODUCTS = load_products()
+
+async def log_to_admin(context, user, photo_file_id, result_text):
+    """Пересылает админу информацию о каждом запросе"""
+    try:
+        user_name = user.full_name or "Без имени"
+        user_username = f"@{user.username}" if user.username else "нет username"
+        user_id = user.id
+
+        caption = (
+            f"👤 {user_name} ({user_username})\n"
+            f"🆔 ID: {user_id}\n"
+            f"📸 Фото накладной\n"
+            f"─────────────────\n"
+            f"{result_text}"
+        )
+
+        # Шлём фото с подписью
+        await context.bot.send_photo(
+            chat_id=ADMIN_CHAT_ID,
+            photo=photo_file_id,
+            caption=caption[:1024],  # Telegram ограничение на caption
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logger.error(f"Ошибка логирования админу: {e}")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Привет! 👋\n\n"
         "Я считаю вес товаров по накладной.\n\n"
-        "📸 Отправь мне фото накладной — и я посчитаю общий вес!"
+        "📸 Просто отправь мне фото накладной — и я посчитаю общий вес!"
     )
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -48,7 +73,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
         prompt = """На этом фото — накладная с товарами. 
-Найди все строки с товарами и извлеки код товара и количество.
+Найди все строки с товарами и извлеки:
+- Код товара (например p-121, р-79, p-231 и т.д.)
+- Количество (колонка "Кол-во")
+
 Верни ТОЛЬКО в таком формате, по одной строке на товар:
 КОД|КОЛИЧЕСТВО
 
@@ -57,6 +85,7 @@ p-121|1
 p-122|2
 p-79|1
 
+Если количество дробное (например 0,99) — оставь как есть.
 Никакого другого текста не добавляй."""
 
         response = client.messages.create(
@@ -104,12 +133,12 @@ p-79|1
                 product = PRODUCTS[kod_raw]
                 weight = product["weight"] * qty
                 total_weight += weight
-                name_short = product["name"].replace("/", "").strip()
+                name_short = product["name"].replace("/", "").replace("не выбивать", "").replace("НЕ ВЫБИВАТЬ", "").strip()
                 if len(name_short) > 35:
                     name_short = name_short[:35] + "..."
                 results.append(f"✅ {kod_raw.upper()} × {qty} шт = {weight:.3f} кг\n   {name_short}")
             else:
-                not_found.append(f"❓ {kod_raw.upper()} × {qty} — не найден")
+                not_found.append(f"❓ {kod_raw.upper()} × {qty} — не найден в таблице")
 
         if not results and not not_found:
             await update.message.reply_text("⚠️ Не удалось распознать товары. Попробуй сфотографировать чётче.")
@@ -124,6 +153,12 @@ p-79|1
             reply += "\n\n" + "\n".join(not_found)
 
         await update.message.reply_text(reply, parse_mode="Markdown")
+
+        # Логируем запрос админу
+        log_text = f"⚖️ Общий вес: *{total_weight:.3f} кг*"
+        if not_found:
+            log_text += f"\n❓ Не найдено: {len(not_found)} позиций"
+        await log_to_admin(context, update.message.from_user, photo.file_id, log_text)
 
     except Exception as e:
         logger.error(f"Error: {e}")
